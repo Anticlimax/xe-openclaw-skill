@@ -31,6 +31,15 @@ export function resolveXetUrls(runtime) {
   };
 }
 
+async function tryAccess(filePath) {
+  try {
+    await import("node:fs/promises").then((fs) => fs.access(filePath));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function ensureRuntime(runtime) {
   if (!runtime || !runtime.playwright) {
     throw new Error("playwright runtime is required");
@@ -49,13 +58,24 @@ export function ensureRuntime(runtime) {
 export async function launchLoggedInPage(runtime, selectors) {
   ensureRuntime(runtime);
   const { loginUrl } = resolveXetUrls(runtime);
+  const headless = runtime.headless !== false;
+  const usePersistentProfile = typeof runtime.userDataDir === "string" && runtime.userDataDir.trim().length > 0;
+  let browser = null;
+  let context = null;
+  let page = null;
 
-  const browser = await runtime.playwright.chromium.launch({
-    headless: runtime.headless !== false
-  });
-
-  const context = await browser.newContext();
-  const page = await context.newPage();
+  if (usePersistentProfile) {
+    context = await runtime.playwright.chromium.launchPersistentContext(runtime.userDataDir, { headless });
+    page = context.pages()[0] || (await context.newPage());
+  } else {
+    browser = await runtime.playwright.chromium.launch({ headless });
+    const contextOptions = {};
+    if (runtime.storageStatePath && (await tryAccess(runtime.storageStatePath))) {
+      contextOptions.storageState = runtime.storageStatePath;
+    }
+    context = await browser.newContext(contextOptions);
+    page = await context.newPage();
+  }
 
   await page.goto(loginUrl);
   const hasCredentials = !!(

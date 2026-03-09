@@ -13,6 +13,7 @@ const plugin = {
       baseUrl: { type: "string" },
       loginUrl: { type: "string" },
       storageStatePath: { type: "string" },
+      userDataDir: { type: "string" },
       headless: { type: "boolean" },
       loginTimeoutMs: { type: "number", minimum: 1000 },
       credentials: {
@@ -80,10 +81,11 @@ async function runLogin(api) {
   const stateDir = resolveStateDir(api);
   await fs.mkdir(stateDir, { recursive: true });
   const storageStatePath = cfg.storageStatePath || path.join(stateDir, "xet-storage-state.json");
+  const userDataDir = cfg.userDataDir || path.join(stateDir, "xet-browser-profile");
+  await fs.mkdir(userDataDir, { recursive: true });
 
-  const browser = await chromium.launch({ headless });
-  const context = await browser.newContext();
-  const page = await context.newPage();
+  const context = await chromium.launchPersistentContext(userDataDir, { headless });
+  const page = context.pages()[0] || (await context.newPage());
 
   try {
     await page.goto(loginUrl, { waitUntil: "domcontentloaded" });
@@ -103,6 +105,7 @@ async function runLogin(api) {
       text:
         "XET login completed and session saved.\n" +
         `storageState=${storageStatePath}\n` +
+        `userDataDir=${userDataDir}\n` +
         `headless=${headless}`
     };
   } catch (error) {
@@ -112,11 +115,11 @@ async function runLogin(api) {
         "XET login guide timed out or failed.\n" +
         `url=${loginUrl}\n` +
         `error=${message}\n` +
+        `userDataDir=${userDataDir}\n` +
         "Tip: set plugin config headless=false and complete login manually in opened browser."
     };
   } finally {
     await context.close();
-    await browser.close();
   }
 }
 
