@@ -96,18 +96,7 @@ async function runLogin(api) {
       await page.click('button[type="submit"]');
     }
 
-    await page.waitForURL(
-      (url) => {
-        const href = String(url || "").toLowerCase();
-        if (!href) return false;
-        // Treat login/auth pages as not-completed, even if host contains "admin".
-        if (href.includes("/login") || href.includes("signin") || href.includes("/auth")) {
-          return false;
-        }
-        return true;
-      },
-      { timeout: timeoutMs },
-    );
+    await page.waitForURL((url) => isMerchantLandingUrl(url), { timeout: timeoutMs });
     await context.storageState({ path: storageStatePath });
 
     return {
@@ -140,3 +129,9 @@ function resolveStateDir(api) {
 }
 
 export default plugin;
+
+export function isMerchantLandingUrl(url) {
+  const href = String(url || "").toLowerCase();
+  if (!href) return false;
+  return href.includes("admin.xiaoe-tech.com/t/merchant/index");
+}
