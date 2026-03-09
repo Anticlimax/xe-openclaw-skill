@@ -98,3 +98,26 @@ test("createLiveWithPlaywright throws when credentials are missing", async () =>
     /credentials/
   );
 });
+
+test("createLiveWithPlaywright supports guided login without credentials", async () => {
+  const runtime = createMockRuntime();
+  let guideCalled = false;
+
+  const result = await createLiveWithPlaywright(
+    {
+      title: "春季新品直播",
+      start_time: "2026-03-12 20:00"
+    },
+    {
+      playwright: runtime.playwright,
+      baseUrl: "https://admin.xiaoe-tech.com",
+      loginGuide: true,
+      onLoginGuide: async () => {
+        guideCalled = true;
+      }
+    }
+  );
+
+  assert.equal(result.live_id, "abc123");
+  assert.equal(guideCalled, true);
+});

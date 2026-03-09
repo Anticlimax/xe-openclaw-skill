@@ -35,7 +35,13 @@ export function ensureRuntime(runtime) {
   if (!runtime || !runtime.playwright) {
     throw new Error("playwright runtime is required");
   }
-  if (!runtime.credentials || !runtime.credentials.username || !runtime.credentials.password) {
+  const hasCredentials = !!(
+    runtime.credentials &&
+    runtime.credentials.username &&
+    runtime.credentials.password
+  );
+  const useGuide = runtime.loginGuide === true;
+  if (!hasCredentials && !useGuide) {
     throw new Error("credentials are required");
   }
 }
@@ -52,9 +58,18 @@ export async function launchLoggedInPage(runtime, selectors) {
   const page = await context.newPage();
 
   await page.goto(loginUrl);
-  await page.fill(selectors.username, runtime.credentials.username);
-  await page.fill(selectors.password, runtime.credentials.password);
-  await page.click(selectors.loginSubmit);
+  const hasCredentials = !!(
+    runtime.credentials &&
+    runtime.credentials.username &&
+    runtime.credentials.password
+  );
+  if (hasCredentials) {
+    await page.fill(selectors.username, runtime.credentials.username);
+    await page.fill(selectors.password, runtime.credentials.password);
+    await page.click(selectors.loginSubmit);
+  } else if (runtime.loginGuide && typeof runtime.onLoginGuide === "function") {
+    await runtime.onLoginGuide(page);
+  }
   await page.waitForURL(/dashboard|home|index/);
 
   return { browser, context, page };
