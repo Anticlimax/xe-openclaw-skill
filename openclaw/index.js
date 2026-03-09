@@ -29,6 +29,13 @@ const plugin = {
     }
   },
   register(api) {
+    registerXetTools(api);
+    if (typeof api?.on === "function") {
+      api.on("before_prompt_build", async () => ({
+        prependSystemContext:
+          "When user asks to login Xiaoe admin or create Xiaoe live, prefer tools xet_login and xet_live_create."
+      }));
+    }
     api.registerCommand({
       name: "xet",
       description: "Xiaoe helper commands: /xet login | /xet live create | /xet smoke",
@@ -304,6 +311,66 @@ export async function executeResolvedIntent({ api, intent }) {
       `intent=${name || "unknown"}\n` +
       `reason=${intent?.reason || "unsupported"}\n` +
       "Tip: use explicit command, e.g. /xet login or /xet live create --title \"...\" --start \"YYYY-MM-DD HH:mm\""
+  };
+}
+
+export function registerXetTools(api) {
+  if (typeof api?.registerTool !== "function") {
+    return;
+  }
+  api.registerTool(createXetLoginTool(api));
+  api.registerTool(createXetLiveCreateTool(api));
+}
+
+function createXetLoginTool(api) {
+  return {
+    name: "xet_login",
+    label: "XET Login",
+    description:
+      "Open Xiaoe admin login flow and keep browser session active until merchant index page is reached.",
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      properties: {}
+    },
+    execute: async () => {
+      const result = await runLogin(api);
+      return {
+        content: [{ type: "text", text: result.text || "xet_login completed." }],
+        details: { ok: !/failed|timed out/i.test(String(result.text || "")) }
+      };
+    }
+  };
+}
+
+function createXetLiveCreateTool(api) {
+  return {
+    name: "xet_live_create",
+    label: "XET Live Create",
+    description:
+      "Create a Xiaoe live in current logged-in session. Requires title and start_time in format YYYY-MM-DD HH:mm.",
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        title: { type: "string" },
+        start_time: { type: "string" },
+        description: { type: "string" }
+      },
+      required: ["title", "start_time"]
+    },
+    execute: async (_toolCallId, params = {}) => {
+      const input = {
+        title: String(params.title || "").trim(),
+        start_time: String(params.start_time || "").trim(),
+        description: String(params.description || "").trim()
+      };
+      const result = await runLiveCreateWithInput(api, input);
+      return {
+        content: [{ type: "text", text: result.text || "xet_live_create completed." }],
+        details: input
+      };
+    }
   };
 }
 
