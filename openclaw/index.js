@@ -2,6 +2,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { chromium } from "playwright";
 
+let activeSession = null;
+
 const plugin = {
   id: "xe-openclaw-skill",
   name: "Xiaoe OpenClaw Skill",
@@ -43,11 +45,25 @@ const plugin = {
           return await runLogin(api);
         }
 
+        if (action === "session") {
+          const subAction = (args[1] || "status").toLowerCase();
+          if (subAction === "close" || subAction === "logout") {
+            await closeActiveSession();
+            return { text: "XET session closed." };
+          }
+          return {
+            text: activeSession
+              ? `XET session is active.\nuserDataDir=${activeSession.userDataDir}\nstartedAt=${new Date(activeSession.startedAt).toISOString()}`
+              : "XET session is not active."
+          };
+        }
+
         return {
           text:
             "Usage:\n" +
             "/xet login  - open Xiaoe admin login and save session state\n" +
-            "/xet smoke  - browser smoke check (open example.com + screenshot)"
+            "/xet smoke  - browser smoke check (open example.com + screenshot)\n" +
+            "/xet session status|close - view/close the in-memory active browser session"
         };
       }
     });
@@ -84,8 +100,9 @@ async function runLogin(api) {
   const userDataDir = cfg.userDataDir || path.join(stateDir, "xet-browser-profile");
   await fs.mkdir(userDataDir, { recursive: true });
 
-  const context = await chromium.launchPersistentContext(userDataDir, { headless });
-  const page = context.pages()[0] || (await context.newPage());
+  const session = await ensureActiveSession({ userDataDir, headless });
+  const context = session.context;
+  const page = session.page;
 
   try {
     await page.goto(loginUrl, { waitUntil: "domcontentloaded" });
@@ -103,7 +120,7 @@ async function runLogin(api) {
 
     return {
       text:
-        "XET login completed and session saved.\n" +
+        "XET login completed. Session remains active for subsequent operations.\n" +
         `storageState=${storageStatePath}\n` +
         `userDataDir=${userDataDir}\n` +
         `headless=${headless}`
@@ -116,10 +133,8 @@ async function runLogin(api) {
         `url=${loginUrl}\n` +
         `error=${message}\n` +
         `userDataDir=${userDataDir}\n` +
-        "Tip: set plugin config headless=false and complete login manually in opened browser."
+        "Tip: session stays open for manual login; re-run /xet login after you complete auth."
     };
-  } finally {
-    await context.close();
   }
 }
 
@@ -137,4 +152,33 @@ export function isMerchantLandingUrl(url) {
   const href = String(url || "").toLowerCase();
   if (!href) return false;
   return href.includes("admin.xiaoe-tech.com/t/merchant/index");
+}
+
+async function ensureActiveSession({ userDataDir, headless }) {
+  if (activeSession && activeSession.userDataDir === userDataDir) {
+    try {
+      const currentUrl = activeSession.page.url();
+      if (typeof currentUrl === "string") {
+        return activeSession;
+      }
+    } catch {
+      await closeActiveSession();
+    }
+  } else if (activeSession) {
+    await closeActiveSession();
+  }
+
+  const context = await chromium.launchPersistentContext(userDataDir, { headless });
+  const page = context.pages()[0] || (await context.newPage());
+  activeSession = { context, page, userDataDir, startedAt: Date.now() };
+  return activeSession;
+}
+
+async function closeActiveSession() {
+  if (!activeSession) return;
+  try {
+    await activeSession.context.close();
+  } finally {
+    activeSession = null;
+  }
 }
