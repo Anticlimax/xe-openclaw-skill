@@ -3,6 +3,12 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "description": "OpenClaw plugin for XiaoeTech browser automation",
+  "openclaw": {
+    "extensions": [
+      "./openclaw/index.js"
+    ]
+  },
   "scripts": {
     "test": "node --test",
     "smoke:browser": "node scripts/browser-smoke.mjs"
