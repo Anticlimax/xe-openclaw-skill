@@ -96,7 +96,18 @@ async function runLogin(api) {
       await page.click('button[type="submit"]');
     }
 
-    await page.waitForURL(/dashboard|home|index|admin/, { timeout: timeoutMs });
+    await page.waitForURL(
+      (url) => {
+        const href = String(url || "").toLowerCase();
+        if (!href) return false;
+        // Treat login/auth pages as not-completed, even if host contains "admin".
+        if (href.includes("/login") || href.includes("signin") || href.includes("/auth")) {
+          return false;
+        }
+        return true;
+      },
+      { timeout: timeoutMs },
+    );
     await context.storageState({ path: storageStatePath });
 
     return {
