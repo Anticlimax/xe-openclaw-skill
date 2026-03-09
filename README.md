@@ -33,3 +33,24 @@ const result = await createLiveWithPlaywright(
 
 console.log(result);
 ```
+
+## OpenClaw 命令（当前可用）
+
+1. 登录并保持会话
+
+```bash
+/xet login
+```
+
+2. 在当前登录会话中创建直播
+
+```bash
+/xet live create --title "3月新品场" --start "2026-03-10 20:00" --desc "今晚主推爆品"
+```
+
+3. 查看/关闭会话
+
+```bash
+/xet session status
+/xet session close
+```

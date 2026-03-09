@@ -31,41 +31,9 @@ const plugin = {
   register(api) {
     api.registerCommand({
       name: "xet",
-      description: "Xiaoe helper commands: /xet login | /xet smoke",
+      description: "Xiaoe helper commands: /xet login | /xet live create | /xet smoke",
       acceptsArgs: true,
-      handler: async (ctx) => {
-        const args = (ctx.args || "").trim().split(/\s+/).filter(Boolean);
-        const action = (args[0] || "help").toLowerCase();
-
-        if (action === "smoke") {
-          return await runSmoke(api);
-        }
-
-        if (action === "login") {
-          return await runLogin(api);
-        }
-
-        if (action === "session") {
-          const subAction = (args[1] || "status").toLowerCase();
-          if (subAction === "close" || subAction === "logout") {
-            await closeActiveSession();
-            return { text: "XET session closed." };
-          }
-          return {
-            text: activeSession
-              ? `XET session is active.\nuserDataDir=${activeSession.userDataDir}\nstartedAt=${new Date(activeSession.startedAt).toISOString()}`
-              : "XET session is not active."
-          };
-        }
-
-        return {
-          text:
-            "Usage:\n" +
-            "/xet login  - open Xiaoe admin login and save session state\n" +
-            "/xet smoke  - browser smoke check (open example.com + screenshot)\n" +
-            "/xet session status|close - view/close the in-memory active browser session"
-        };
-      }
+      handler: async (ctx) => handleXetCommand({ api, argsText: ctx.args || "" })
     });
   }
 };
@@ -138,6 +106,53 @@ async function runLogin(api) {
   }
 }
 
+async function runLiveCreate(api, rawArgs) {
+  if (!activeSession?.page) {
+    return { text: "XET session is not active. Please run /xet login first." };
+  }
+
+  const input = parseCreateLiveArgs(rawArgs);
+  if (!input.title || !input.start_time) {
+    return {
+      text:
+        "Missing required args.\n" +
+        "Usage: /xet live create --title \"直播标题\" --start \"2026-03-10 20:00\" [--desc \"简介\"]"
+    };
+  }
+
+  const cfg = api.config || {};
+  const page = activeSession.page;
+  const baseUrl = cfg.baseUrl || "https://admin.xiaoe-tech.com";
+  const createLiveUrl = cfg.createLiveUrl || `${baseUrl}/t/live/add`;
+  await page.goto(createLiveUrl, { waitUntil: "domcontentloaded" });
+
+  const titleFilled = await fillByCandidates(page, TITLE_CANDIDATES, input.title);
+  const startFilled = await fillByCandidates(page, START_TIME_CANDIDATES, input.start_time);
+  await fillByCandidates(page, DESCRIPTION_CANDIDATES, input.description);
+
+  if (!titleFilled || !startFilled) {
+    return {
+      text:
+        "Live page opened but required fields were not found.\n" +
+        `url=${createLiveUrl}\n` +
+        "Please update selectors in plugin code for your current Xiaoe UI."
+    };
+  }
+
+  await clickFirstCandidate(page, PUBLISH_CANDIDATES);
+  const liveUrl = await readFirstAttribute(page, LIVE_LINK_CANDIDATES, "href");
+  const liveId = extractLiveId(liveUrl);
+
+  return {
+    text:
+      "XET live create executed in active session.\n" +
+      `title=${input.title}\n` +
+      `start_time=${input.start_time}\n` +
+      `live_id=${liveId}\n` +
+      `live_url=${liveUrl || ""}`
+  };
+}
+
 function resolveStateDir(api) {
   const byRuntime = api?.runtime?.state?.resolveStateDir?.();
   if (typeof byRuntime === "string" && byRuntime.trim()) {
@@ -152,6 +167,148 @@ export function isMerchantLandingUrl(url) {
   const href = String(url || "").toLowerCase();
   if (!href) return false;
   return href.includes("admin.xiaoe-tech.com/t/merchant/index");
+}
+
+export function parseCreateLiveArgs(rawArgs = []) {
+  const parsed = {};
+  const list = Array.isArray(rawArgs) ? rawArgs : [];
+  for (let i = 0; i < list.length; i += 1) {
+    const token = list[i];
+    if (!token.startsWith("--")) continue;
+    const key = token.slice(2).toLowerCase();
+    const value = list[i + 1] && !list[i + 1].startsWith("--") ? list[++i] : "";
+    if (key === "title") parsed.title = value;
+    if (key === "start") parsed.start_time = value;
+    if (key === "desc") parsed.description = value;
+  }
+  return parsed;
+}
+
+export async function handleXetCommand({ api, argsText }) {
+  const args = tokenizeArgs(argsText);
+  const action = (args[0] || "help").toLowerCase();
+
+  if (action === "smoke") {
+    return await runSmoke(api);
+  }
+
+  if (action === "login") {
+    return await runLogin(api);
+  }
+
+  if (action === "live" && (args[1] || "").toLowerCase() === "create") {
+    return await runLiveCreate(api, args.slice(2));
+  }
+
+  if (action === "session") {
+    const subAction = (args[1] || "status").toLowerCase();
+    if (subAction === "close" || subAction === "logout") {
+      await closeActiveSession();
+      return { text: "XET session closed." };
+    }
+    return {
+      text: activeSession
+        ? `XET session is active.\nuserDataDir=${activeSession.userDataDir}\nstartedAt=${new Date(activeSession.startedAt).toISOString()}`
+        : "XET session is not active."
+    };
+  }
+
+  return {
+    text:
+      "Usage:\n" +
+      "/xet login  - open Xiaoe admin login and save session state\n" +
+      "/xet live create --title \"直播标题\" --start \"2026-03-10 20:00\" [--desc \"简介\"]\n" +
+      "/xet smoke  - browser smoke check (open example.com + screenshot)\n" +
+      "/xet session status|close - view/close the in-memory active browser session"
+  };
+}
+
+function tokenizeArgs(input) {
+  const text = String(input || "").trim();
+  if (!text) return [];
+  const tokens = [];
+  const re = /"([^"]*)"|'([^']*)'|(\S+)/g;
+  let match;
+  while ((match = re.exec(text)) !== null) {
+    tokens.push(match[1] ?? match[2] ?? match[3]);
+  }
+  return tokens;
+}
+
+function extractLiveId(liveUrl) {
+  if (!liveUrl || typeof liveUrl !== "string") return "";
+  const parts = liveUrl.split("/").filter(Boolean);
+  return parts.at(-1) || "";
+}
+
+const TITLE_CANDIDATES = [
+  'input[name="title"]',
+  '[data-testid="live-title"] input',
+  'input[placeholder*="标题"]'
+];
+const START_TIME_CANDIDATES = [
+  'input[name="start_time"]',
+  '[data-testid="live-start-time"] input',
+  'input[placeholder*="开始"]'
+];
+const DESCRIPTION_CANDIDATES = [
+  'textarea[name="description"]',
+  '[data-testid="live-description"] textarea',
+  'textarea[placeholder*="简介"]'
+];
+const PUBLISH_CANDIDATES = [
+  '[data-testid="publish-live"]',
+  'button:has-text("发布")',
+  'button:has-text("创建直播")'
+];
+const LIVE_LINK_CANDIDATES = [
+  '[data-testid="live-link"]',
+  'a[href*="/live/"]'
+];
+
+async function fillByCandidates(page, candidates, value) {
+  if (!value || typeof value !== "string" || value.trim().length === 0) return false;
+  for (const selector of candidates) {
+    try {
+      const locator = page.locator(selector).first();
+      if ((await locator.count()) > 0) {
+        await locator.fill(value);
+        return true;
+      }
+    } catch {
+      continue;
+    }
+  }
+  return false;
+}
+
+async function clickFirstCandidate(page, candidates) {
+  for (const selector of candidates) {
+    try {
+      const locator = page.locator(selector).first();
+      if ((await locator.count()) > 0) {
+        await locator.click();
+        return true;
+      }
+    } catch {
+      continue;
+    }
+  }
+  return false;
+}
+
+async function readFirstAttribute(page, candidates, attr) {
+  for (const selector of candidates) {
+    try {
+      const locator = page.locator(selector).first();
+      if ((await locator.count()) > 0) {
+        return await locator.getAttribute(attr);
+      }
+    } catch {
+      continue;
+    }
+  }
+  return "";
 }
 
 async function ensureActiveSession({ userDataDir, headless }) {
@@ -181,4 +338,8 @@ async function closeActiveSession() {
   } finally {
     activeSession = null;
   }
+}
+
+export function __setActiveSessionForTest(session) {
+  activeSession = session;
 }
