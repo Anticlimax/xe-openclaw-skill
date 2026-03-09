@@ -48,6 +48,17 @@ console.log(result);
 /xet live create --title "3月新品场" --start "2026-03-10 20:00" --desc "今晚主推爆品"
 ```
 
+2.5 自然语言模式（Skill 调度）
+
+```bash
+/xet 帮我登录小鹅通后台
+/xet 帮我创建一场直播，标题叫春季上新，开始时间是2026-03-10 20:00
+```
+
+说明:
+- 自然语言模式依赖 OpenClaw runtime 提供 `intent.resolve` 能力。
+- 若当前 runtime 未提供该能力，插件会提示你改用显式命令。
+
 3. 查看/关闭会话
 
 ```bash

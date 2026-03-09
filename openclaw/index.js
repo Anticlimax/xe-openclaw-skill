@@ -107,11 +107,15 @@ async function runLogin(api) {
 }
 
 async function runLiveCreate(api, rawArgs) {
+  const input = parseCreateLiveArgs(rawArgs);
+  return runLiveCreateWithInput(api, input);
+}
+
+async function runLiveCreateWithInput(api, input) {
   if (!activeSession?.page) {
     return { text: "XET session is not active. Please run /xet login first." };
   }
 
-  const input = parseCreateLiveArgs(rawArgs);
   if (!input.title || !input.start_time) {
     return {
       text:
@@ -213,6 +217,10 @@ export async function handleXetCommand({ api, argsText }) {
     };
   }
 
+  if (String(argsText || "").trim()) {
+    return routeNaturalLanguage({ api, text: String(argsText || "") });
+  }
+
   return {
     text:
       "Usage:\n" +
@@ -234,6 +242,107 @@ function tokenizeArgs(input) {
   }
   return tokens;
 }
+
+export async function routeNaturalLanguage({ api, text, resolveIntent, executeIntent }) {
+  const resolver = resolveIntent || resolveIntentFromText;
+  const executor = executeIntent || executeResolvedIntent;
+
+  const intent = await resolver({ api, text });
+  return executor({ api, intent });
+}
+
+export async function resolveIntentFromText({ api, text }) {
+  const source = String(text || "").trim();
+  if (!source) {
+    return { intent: "unknown", reason: "empty_input" };
+  }
+
+  const runtimeResolver = api?.runtime?.intent?.resolve;
+  if (typeof runtimeResolver !== "function") {
+    return {
+      intent: "unknown",
+      reason: "intent_resolver_unavailable",
+      raw: source
+    };
+  }
+
+  try {
+    const resolved = await runtimeResolver({
+      task: "xet_intent_v1",
+      text: source,
+      schema: XET_INTENT_SCHEMA
+    });
+    return normalizeIntentResult(resolved, source);
+  } catch (error) {
+    return {
+      intent: "unknown",
+      reason: "intent_resolver_error",
+      error: error instanceof Error ? error.message : String(error),
+      raw: source
+    };
+  }
+}
+
+export async function executeResolvedIntent({ api, intent }) {
+  const name = String(intent?.intent || "");
+  if (name === "xet.login") {
+    return runLogin(api);
+  }
+
+  if (name === "xet.live.create") {
+    const input = {
+      title: intent?.params?.title || "",
+      start_time: intent?.params?.start_time || "",
+      description: intent?.params?.description || ""
+    };
+    return runLiveCreateWithInput(api, input);
+  }
+
+  return {
+    text:
+      "Natural language is enabled but intent is unresolved.\n" +
+      `intent=${name || "unknown"}\n` +
+      `reason=${intent?.reason || "unsupported"}\n` +
+      "Tip: use explicit command, e.g. /xet login or /xet live create --title \"...\" --start \"YYYY-MM-DD HH:mm\""
+  };
+}
+
+function normalizeIntentResult(resolved, raw) {
+  const intent = String(resolved?.intent || "").trim();
+  if (intent === "xet.login") {
+    return { intent, raw };
+  }
+  if (intent === "xet.live.create") {
+    const params = {
+      title: String(resolved?.params?.title || "").trim(),
+      start_time: String(resolved?.params?.start_time || "").trim(),
+      description: String(resolved?.params?.description || "").trim()
+    };
+    return { intent, params, raw };
+  }
+  return { intent: "unknown", reason: "unsupported_intent", raw };
+}
+
+const XET_INTENT_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    intent: {
+      type: "string",
+      enum: ["xet.login", "xet.live.create", "unknown"]
+    },
+    params: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        title: { type: "string" },
+        start_time: { type: "string" },
+        description: { type: "string" }
+      }
+    }
+  },
+  required: ["intent"]
+};
 
 function extractLiveId(liveUrl) {
   if (!liveUrl || typeof liveUrl !== "string") return "";

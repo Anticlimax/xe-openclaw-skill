@@ -8,7 +8,9 @@
     "properties": {
       "baseUrl": { "type": "string" },
       "loginUrl": { "type": "string" },
+      "createLiveUrl": { "type": "string" },
       "storageStatePath": { "type": "string" },
+      "userDataDir": { "type": "string" },
       "headless": { "type": "boolean" },
       "loginTimeoutMs": { "type": "number", "minimum": 1000 },
       "credentials": {
