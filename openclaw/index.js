@@ -33,6 +33,7 @@ const plugin = {
   },
   register(api) {
     registerXetTools(api);
+    registerXetGatewayMethods(api);
     if (typeof api?.on === "function") {
       api.on("before_tool_call", async (event, ctx) => {
         addTrace(api, "hook.before_tool_call", {
@@ -420,6 +421,22 @@ export function registerXetTools(api) {
   api.registerTool(createXetLiveCreateTool(api));
 }
 
+export function registerXetGatewayMethods(api) {
+  if (typeof api?.registerGatewayMethod !== "function") {
+    return;
+  }
+  api.registerGatewayMethod("xet.trace.get", ({ respond }) => {
+    respond(true, {
+      trace: getRecentTraceEntries(),
+      count: traceBuffer.length
+    });
+  });
+  api.registerGatewayMethod("xet.trace.clear", ({ respond }) => {
+    clearTrace();
+    respond(true, { ok: true });
+  });
+}
+
 function createXetLoginTool(api) {
   return {
     name: "xet_login",
@@ -666,7 +683,7 @@ function traceSpan(api, event, seedDetails = {}) {
 }
 
 function formatTraceText(limit = 40) {
-  const recent = traceBuffer.slice(-limit);
+  const recent = getRecentTraceEntries(limit);
   if (recent.length === 0) {
     return "No traces yet.";
   }
@@ -679,6 +696,10 @@ function formatTraceText(limit = 40) {
 
 function clearTrace() {
   traceBuffer.length = 0;
+}
+
+function getRecentTraceEntries(limit = 40) {
+  return traceBuffer.slice(-Math.max(1, Number(limit) || 40));
 }
 
 function safeJson(value) {
