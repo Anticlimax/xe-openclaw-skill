@@ -6,6 +6,16 @@ let activeSession = null;
 const traceBuffer = [];
 const TRACE_LIMIT = 200;
 const promptByRunId = new Map();
+const XET_SYSTEM_PROMPT = [
+  "Xiaoe tool-routing MUST rules:",
+  "1) If latest user request is about 小鹅通 / xiaoe / xet (login, 店铺后台, 直播), you MUST call `xet_router` before any other tool.",
+  "2) For Xiaoe requests, do NOT use generic tools (`exec`, `read`, `write`, `grep`, shell) unless user explicitly asks to debug local code/files.",
+  "3) Do NOT ask user for Xiaoe account/password before trying tool call.",
+  "4) If create-live params missing, ask one concise follow-up question.",
+  "Examples:",
+  "- 帮我登录小鹅通后台 -> call xet_router({text: \"帮我登录小鹅通后台\"})",
+  "- 帮我创建直播，标题春季上新，开始时间2026-03-10 20:00 -> call xet_router({...})"
+].join("\n");
 
 const plugin = {
   id: "xe-openclaw-skill",
@@ -79,18 +89,12 @@ const plugin = {
           promptByRunId.clear();
         }
       });
-      api.on("before_prompt_build", async () => ({
-        prependSystemContext: [
-          "Xiaoe tool-routing MUST rules:",
-          "1) If latest user request is about 小鹅通 / xiaoe / xet (login, 店铺后台, 直播), you MUST call `xet_router` before any other tool.",
-          "2) For Xiaoe requests, do NOT use generic tools (`exec`, `read`, `write`, `grep`, shell) unless user explicitly asks to debug local code/files.",
-          "3) Do NOT ask user for Xiaoe account/password before trying tool call.",
-          "4) If create-live params missing, ask one concise follow-up question.",
-          "Examples:",
-          "- 帮我登录小鹅通后台 -> call xet_router({text: \"帮我登录小鹅通后台\"})",
-          "- 帮我创建直播，标题春季上新，开始时间2026-03-10 20:00 -> call xet_router({...})"
-        ].join("\n")
-      }));
+      api.on("before_prompt_build", async () => {
+        addTrace(api, "hook.before_prompt_build", {
+          prependSystemContextChars: XET_SYSTEM_PROMPT.length
+        });
+        return { prependSystemContext: XET_SYSTEM_PROMPT };
+      });
     }
     api.registerCommand({
       name: "xet",
@@ -310,6 +314,15 @@ export async function handleXetCommand({ api, argsText }) {
     return { text: formatTraceText() };
   }
 
+  if (action === "prompt") {
+    done({ action: "prompt", status: "ok" });
+    return {
+      text:
+        `XET prependSystemContext chars=${XET_SYSTEM_PROMPT.length}\n` +
+        XET_SYSTEM_PROMPT
+    };
+  }
+
   if (action === "session") {
     const subAction = (args[1] || "status").toLowerCase();
     if (subAction === "close" || subAction === "logout") {
@@ -342,6 +355,7 @@ export async function handleXetCommand({ api, argsText }) {
       "Usage:\n" +
       "/xet login  - open Xiaoe admin login and save session state\n" +
       "/xet live create --title \"直播标题\" --start \"2026-03-10 20:00\" [--desc \"简介\"]\n" +
+      "/xet prompt - print current injected system prompt text\n" +
       "/xet trace [clear] - show/clear recent plugin traces for diagnosis\n" +
       "/xet smoke  - browser smoke check (open example.com + screenshot)\n" +
       "/xet session status|close|trace - session state and traces"
@@ -732,6 +746,10 @@ async function closeActiveSession() {
 
 export function __setActiveSessionForTest(session) {
   activeSession = session;
+}
+
+export function getXetSystemPrompt() {
+  return XET_SYSTEM_PROMPT;
 }
 
 function addTrace(api, event, details = {}) {
