@@ -55,13 +55,13 @@ const plugin = {
       api.on("before_prompt_build", async () => ({
         prependSystemContext: [
           "Tool-routing policy for Xiaoe:",
-          "1) If user asks to login Xiaoe (e.g. '登录小鹅通后台'), call tool `xet_login` first.",
-          "2) If user asks to create live, call tool `xet_live_create` with title/start_time.",
+          "1) For ANY Xiaoe-related request, call tool `xet_router` first.",
+          "2) Do NOT use exec/shell tools for Xiaoe login/live tasks.",
           "3) Do NOT ask user for Xiaoe account/password before attempting tool call.",
           "4) If required params missing for create_live, ask concise follow-up question.",
           "Chinese examples:",
-          "- 用户: 帮我登录小鹅通后台 -> 调用 xet_login",
-          "- 用户: 帮我创建直播，标题春季上新，开始时间2026-03-10 20:00 -> 调用 xet_live_create"
+          "- 用户: 帮我登录小鹅通后台 -> 调用 xet_router",
+          "- 用户: 帮我创建直播，标题春季上新，开始时间2026-03-10 20:00 -> 调用 xet_router"
         ].join("\n")
       }));
     }
@@ -417,6 +417,7 @@ export function registerXetTools(api) {
   if (typeof api?.registerTool !== "function") {
     return;
   }
+  api.registerTool(createXetRouterTool(api));
   api.registerTool(createXetLoginTool(api));
   api.registerTool(createXetLiveCreateTool(api));
 }
@@ -455,6 +456,33 @@ function createXetLoginTool(api) {
       return {
         content: [{ type: "text", text: result.text || "xet_login completed." }],
         details: { ok: !/failed|timed out/i.test(String(result.text || "")) }
+      };
+    }
+  };
+}
+
+function createXetRouterTool(api) {
+  return {
+    name: "xet_router",
+    label: "XET Router",
+    description:
+      "Route natural-language Xiaoe requests to the right action. Use this first for Xiaoe login/live tasks.",
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        text: { type: "string" }
+      },
+      required: ["text"]
+    },
+    execute: async (_toolCallId, params = {}) => {
+      const done = traceSpan(api, "tool.xet_router");
+      const text = String(params.text || "").trim();
+      const result = await routeNaturalLanguage({ api, text });
+      done({ status: "ok", hasText: !!text });
+      return {
+        content: [{ type: "text", text: result.text || "xet_router completed." }],
+        details: { routed: true }
       };
     }
   };

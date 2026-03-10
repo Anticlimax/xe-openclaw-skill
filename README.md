@@ -58,7 +58,7 @@ console.log(result);
 说明:
 - 自然语言模式依赖 OpenClaw runtime 提供 `intent.resolve` 能力。
 - 若当前 runtime 未提供该能力，插件会提示你改用显式命令。
-- 插件已注册 Agent Tools: `xet_login`、`xet_live_create`，在支持 tool-call 的会话中可直接自然语言触发，无需 `/xet` 前缀。
+- 插件已注册 Agent Tools: `xet_router`、`xet_login`、`xet_live_create`，推荐模型先调用 `xet_router` 做语义路由，再执行具体动作。
 
 3. 查看/关闭会话
 
