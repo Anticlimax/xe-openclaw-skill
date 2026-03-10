@@ -38,7 +38,7 @@ test("xet_live_create tool requires an active session at execution", async () =>
   assert.match(text, /run \/xet login first/i);
 });
 
-test("xet_router tool returns unresolved guidance when resolver is unavailable", async () => {
+test("xet_router tool returns unresolved guidance on non-xet text when resolver is unavailable", async () => {
   const tools = [];
   registerXetTools({
     registerTool(tool) {
@@ -48,7 +48,7 @@ test("xet_router tool returns unresolved guidance when resolver is unavailable",
   });
 
   const router = tools.find((t) => t.name === "xet_router");
-  const result = await router.execute("call_1", { text: "帮我登录小鹅通后台" });
+  const result = await router.execute("call_1", { text: "帮我写一段周报总结" });
   const text = result?.content?.[0]?.text || "";
   assert.match(text, /intent is unresolved/i);
 });

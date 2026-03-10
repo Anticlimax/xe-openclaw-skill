@@ -6,7 +6,17 @@ import {
   routeNaturalLanguage
 } from "../../openclaw/index.js";
 
-test("resolveIntentFromText returns unknown when runtime resolver is unavailable", async () => {
+test("resolveIntentFromText uses heuristic login intent when resolver is unavailable", async () => {
+  const intent = await resolveIntentFromText({
+    api: {},
+    text: "帮我登录小鹅通后台"
+  });
+
+  assert.equal(intent.intent, "xet.login");
+  assert.equal(intent.reason, "heuristic_login");
+});
+
+test("resolveIntentFromText keeps unknown when resolver unavailable and no heuristic match", async () => {
   const intent = await resolveIntentFromText({
     api: {},
     text: "帮我创建今晚八点直播"

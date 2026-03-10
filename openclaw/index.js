@@ -382,6 +382,11 @@ export async function resolveIntentFromText({ api, text }) {
 
   const runtimeResolver = api?.runtime?.intent?.resolve;
   if (typeof runtimeResolver !== "function") {
+    const fallback = resolveIntentHeuristic(source);
+    if (fallback) {
+      done({ status: "heuristic", intent: fallback.intent });
+      return fallback;
+    }
     done({ status: "resolver_unavailable" });
     return {
       intent: "unknown",
@@ -401,6 +406,11 @@ export async function resolveIntentFromText({ api, text }) {
     done({ status: "ok", intent: normalized.intent });
     return normalized;
   } catch (error) {
+    const fallback = resolveIntentHeuristic(source);
+    if (fallback) {
+      done({ status: "heuristic_after_error", intent: fallback.intent });
+      return fallback;
+    }
     done({ status: "error", error: error instanceof Error ? error.message : String(error) });
     return {
       intent: "unknown",
@@ -409,6 +419,20 @@ export async function resolveIntentFromText({ api, text }) {
       raw: source
     };
   }
+}
+
+function resolveIntentHeuristic(source) {
+  const text = String(source || "").trim();
+  if (!text) return null;
+  const lower = text.toLowerCase();
+
+  const mentionsXet = /(小鹅通|xiaoe|xet)/.test(lower);
+  const loginIntent = /(登录|login|登录后台|店铺后台)/.test(lower);
+  if (mentionsXet && loginIntent) {
+    return { intent: "xet.login", raw: text, reason: "heuristic_login" };
+  }
+
+  return null;
 }
 
 export async function executeResolvedIntent({ api, intent }) {
