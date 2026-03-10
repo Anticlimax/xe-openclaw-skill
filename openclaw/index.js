@@ -45,7 +45,7 @@ const plugin = {
       api.on("before_tool_call", async (event, ctx) => {
         const runId = String(event?.runId || ctx?.runId || "");
         const promptText = runId ? promptByRunId.get(runId) : "";
-        const forceRouting = api?.config?.forceXetToolRouting !== false;
+        const forceRouting = api?.config?.forceXetToolRouting === true;
         if (forceRouting && shouldBlockGenericToolForXet(event?.toolName, promptText)) {
           addTrace(api, "hook.before_tool_call.block_generic_for_xet", {
             toolName: event?.toolName || "",
