@@ -34,6 +34,23 @@ const plugin = {
   register(api) {
     registerXetTools(api);
     if (typeof api?.on === "function") {
+      api.on("before_tool_call", async (event, ctx) => {
+        addTrace(api, "hook.before_tool_call", {
+          toolName: event?.toolName || "",
+          toolCallId: event?.toolCallId || "",
+          runId: ctx?.runId || "",
+          sessionId: ctx?.sessionId || ""
+        });
+      });
+      api.on("after_tool_call", async (event, ctx) => {
+        addTrace(api, "hook.after_tool_call", {
+          toolName: event?.toolName || "",
+          toolCallId: event?.toolCallId || "",
+          ok: event?.success !== false,
+          runId: ctx?.runId || "",
+          sessionId: ctx?.sessionId || ""
+        });
+      });
       api.on("before_prompt_build", async () => ({
         prependSystemContext: [
           "Tool-routing policy for Xiaoe:",
@@ -255,6 +272,12 @@ export async function handleXetCommand({ api, argsText }) {
   }
 
   if (action === "trace") {
+    const subAction = (args[1] || "show").toLowerCase();
+    if (subAction === "clear") {
+      clearTrace();
+      done({ action: "trace.clear", status: "ok" });
+      return { text: "XET trace cleared." };
+    }
     done({ action, status: "ok" });
     return { text: formatTraceText() };
   }
@@ -290,7 +313,7 @@ export async function handleXetCommand({ api, argsText }) {
       "Usage:\n" +
       "/xet login  - open Xiaoe admin login and save session state\n" +
       "/xet live create --title \"直播标题\" --start \"2026-03-10 20:00\" [--desc \"简介\"]\n" +
-      "/xet trace  - show recent plugin traces for diagnosis\n" +
+      "/xet trace [clear] - show/clear recent plugin traces for diagnosis\n" +
       "/xet smoke  - browser smoke check (open example.com + screenshot)\n" +
       "/xet session status|close|trace - session state and traces"
   };
@@ -652,6 +675,10 @@ function formatTraceText(limit = 40) {
     return `${item.ts} | ${item.event} | ${compactDetails}`;
   });
   return ["Recent XET traces:", ...lines].join("\n");
+}
+
+function clearTrace() {
+  traceBuffer.length = 0;
 }
 
 function safeJson(value) {
