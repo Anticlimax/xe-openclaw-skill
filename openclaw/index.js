@@ -5,6 +5,7 @@ import { chromium } from "playwright";
 let activeSession = null;
 const traceBuffer = [];
 const TRACE_LIMIT = 200;
+const promptByRunId = new Map();
 
 const plugin = {
   id: "xe-openclaw-skill",
@@ -20,6 +21,7 @@ const plugin = {
       userDataDir: { type: "string" },
       headless: { type: "boolean" },
       debugLogs: { type: "boolean" },
+      forceXetToolRouting: { type: "boolean" },
       loginTimeoutMs: { type: "number", minimum: 1000 },
       credentials: {
         type: "object",
@@ -35,7 +37,27 @@ const plugin = {
     registerXetTools(api);
     registerXetGatewayMethods(api);
     if (typeof api?.on === "function") {
+      api.on("llm_input", async (event) => {
+        const runId = String(event?.runId || "");
+        if (!runId) return;
+        promptByRunId.set(runId, String(event?.prompt || ""));
+      });
       api.on("before_tool_call", async (event, ctx) => {
+        const runId = String(event?.runId || ctx?.runId || "");
+        const promptText = runId ? promptByRunId.get(runId) : "";
+        const forceRouting = api?.config?.forceXetToolRouting !== false;
+        if (forceRouting && shouldBlockGenericToolForXet(event?.toolName, promptText)) {
+          addTrace(api, "hook.before_tool_call.block_generic_for_xet", {
+            toolName: event?.toolName || "",
+            runId,
+            promptHint: String(promptText || "").slice(0, 120)
+          });
+          return {
+            block: true,
+            blockReason:
+              "Xiaoe tasks must use xet_router/xet_login/xet_live_create tools. Do not use generic tools."
+          };
+        }
         addTrace(api, "hook.before_tool_call", {
           toolName: event?.toolName || "",
           toolCallId: event?.toolCallId || "",
@@ -51,6 +73,11 @@ const plugin = {
           runId: ctx?.runId || "",
           sessionId: ctx?.sessionId || ""
         });
+      });
+      api.on("agent_end", async () => {
+        if (promptByRunId.size > 1000) {
+          promptByRunId.clear();
+        }
       });
       api.on("before_prompt_build", async () => ({
         prependSystemContext: [
@@ -287,6 +314,7 @@ export async function handleXetCommand({ api, argsText }) {
     const subAction = (args[1] || "status").toLowerCase();
     if (subAction === "close" || subAction === "logout") {
       await closeActiveSession();
+      promptByRunId.clear();
       done({ action: "session.close", status: "ok" });
       return { text: "XET session closed." };
     }
@@ -728,6 +756,17 @@ function clearTrace() {
 
 function getRecentTraceEntries(limit = 40) {
   return traceBuffer.slice(-Math.max(1, Number(limit) || 40));
+}
+
+export function shouldBlockGenericToolForXet(toolName, promptText) {
+  const tool = String(toolName || "").toLowerCase();
+  const isGeneric = ["exec", "read", "write", "grep", "glob", "ls", "bash", "shell"].includes(tool);
+  if (!isGeneric) return false;
+  const text = String(promptText || "").toLowerCase();
+  if (!text) return false;
+  const xet = /(小鹅通|xiaoe|xet)/.test(text);
+  const action = /(登录|login|直播|live|店铺|后台|merchant)/.test(text);
+  return xet && action;
 }
 
 function safeJson(value) {

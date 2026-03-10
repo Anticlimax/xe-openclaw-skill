@@ -2,7 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   __setActiveSessionForTest,
-  registerXetTools
+  registerXetTools,
+  shouldBlockGenericToolForXet
 } from "../../openclaw/index.js";
 
 test("registerXetTools registers xet_router + xet_login + xet_live_create", () => {
@@ -50,4 +51,23 @@ test("xet_router tool returns unresolved guidance when resolver is unavailable",
   const result = await router.execute("call_1", { text: "帮我登录小鹅通后台" });
   const text = result?.content?.[0]?.text || "";
   assert.match(text, /intent is unresolved/i);
+});
+
+test("shouldBlockGenericToolForXet blocks generic tools only on xet prompts", () => {
+  assert.equal(
+    shouldBlockGenericToolForXet("exec", "帮我登录小鹅通后台"),
+    true
+  );
+  assert.equal(
+    shouldBlockGenericToolForXet("read", "xet live 创建直播"),
+    true
+  );
+  assert.equal(
+    shouldBlockGenericToolForXet("xet_router", "帮我登录小鹅通后台"),
+    false
+  );
+  assert.equal(
+    shouldBlockGenericToolForXet("exec", "帮我写一段 Python 代码"),
+    false
+  );
 });
