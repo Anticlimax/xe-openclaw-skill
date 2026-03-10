@@ -3,6 +3,8 @@ import path from "node:path";
 import { chromium } from "playwright";
 
 let activeSession = null;
+const traceBuffer = [];
+const TRACE_LIMIT = 200;
 
 const plugin = {
   id: "xe-openclaw-skill",
@@ -17,6 +19,7 @@ const plugin = {
       storageStatePath: { type: "string" },
       userDataDir: { type: "string" },
       headless: { type: "boolean" },
+      debugLogs: { type: "boolean" },
       loginTimeoutMs: { type: "number", minimum: 1000 },
       credentials: {
         type: "object",
@@ -54,6 +57,7 @@ const plugin = {
 };
 
 async function runSmoke(api) {
+  const done = traceSpan(api, "runSmoke");
   const stateDir = resolveStateDir(api);
   await fs.mkdir(stateDir, { recursive: true });
   const screenshotPath = path.join(stateDir, "xet-smoke.png");
@@ -64,6 +68,7 @@ async function runSmoke(api) {
     await page.goto("https://example.com", { waitUntil: "domcontentloaded" });
     const title = await page.title();
     await page.screenshot({ path: screenshotPath, fullPage: true });
+    done({ status: "ok", title, screenshotPath });
     return { text: `XET smoke ok. title=${title}\nscreenshot=${screenshotPath}` };
   } finally {
     await browser.close();
@@ -71,6 +76,7 @@ async function runSmoke(api) {
 }
 
 async function runLogin(api) {
+  const done = traceSpan(api, "runLogin");
   const cfg = api.config || {};
   const baseUrl = cfg.baseUrl || "https://admin.xiaoe-tech.com";
   const loginUrl = cfg.loginUrl || `${baseUrl}/login`;
@@ -82,13 +88,21 @@ async function runLogin(api) {
   const storageStatePath = cfg.storageStatePath || path.join(stateDir, "xet-storage-state.json");
   const userDataDir = cfg.userDataDir || path.join(stateDir, "xet-browser-profile");
   await fs.mkdir(userDataDir, { recursive: true });
+  addTrace(api, "runLogin.config", {
+    loginUrl,
+    timeoutMs,
+    headless,
+    userDataDir
+  });
 
   const session = await ensureActiveSession({ userDataDir, headless });
   const context = session.context;
   const page = session.page;
 
   try {
+    addTrace(api, "runLogin.goto.start", { loginUrl });
     await page.goto(loginUrl, { waitUntil: "domcontentloaded" });
+    addTrace(api, "runLogin.goto.done", { currentUrl: safePageUrl(page) });
 
     const username = cfg.credentials?.username;
     const password = cfg.credentials?.password;
@@ -96,20 +110,26 @@ async function runLogin(api) {
       await page.fill('input[name="username"]', username);
       await page.fill('input[name="password"]', password);
       await page.click('button[type="submit"]');
+      addTrace(api, "runLogin.credentialSubmit", { hasUsername: !!username });
     }
 
+    addTrace(api, "runLogin.waitForMerchant.start", { timeoutMs });
     await page.waitForURL((url) => isMerchantLandingUrl(url), { timeout: timeoutMs });
+    addTrace(api, "runLogin.waitForMerchant.done", { currentUrl: safePageUrl(page) });
     await context.storageState({ path: storageStatePath });
+    done({ status: "ok", storageStatePath, currentUrl: safePageUrl(page) });
 
     return {
       text:
         "XET login completed. Session remains active for subsequent operations.\n" +
         `storageState=${storageStatePath}\n` +
         `userDataDir=${userDataDir}\n` +
-        `headless=${headless}`
+        `headless=${headless}\n` +
+        `trace_hint=/xet trace`
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    done({ status: "error", error: message, currentUrl: safePageUrl(page) });
     return {
       text:
         "XET login guide timed out or failed.\n" +
@@ -127,11 +147,14 @@ async function runLiveCreate(api, rawArgs) {
 }
 
 async function runLiveCreateWithInput(api, input) {
+  const done = traceSpan(api, "runLiveCreateWithInput");
   if (!activeSession?.page) {
+    done({ status: "blocked", reason: "session_not_active" });
     return { text: "XET session is not active. Please run /xet login first." };
   }
 
   if (!input.title || !input.start_time) {
+    done({ status: "blocked", reason: "missing_required_args" });
     return {
       text:
         "Missing required args.\n" +
@@ -143,13 +166,17 @@ async function runLiveCreateWithInput(api, input) {
   const page = activeSession.page;
   const baseUrl = cfg.baseUrl || "https://admin.xiaoe-tech.com";
   const createLiveUrl = cfg.createLiveUrl || `${baseUrl}/t/live/add`;
+  addTrace(api, "runLiveCreate.goto.start", { createLiveUrl });
   await page.goto(createLiveUrl, { waitUntil: "domcontentloaded" });
+  addTrace(api, "runLiveCreate.goto.done", { currentUrl: safePageUrl(page) });
 
   const titleFilled = await fillByCandidates(page, TITLE_CANDIDATES, input.title);
   const startFilled = await fillByCandidates(page, START_TIME_CANDIDATES, input.start_time);
   await fillByCandidates(page, DESCRIPTION_CANDIDATES, input.description);
+  addTrace(api, "runLiveCreate.fill.done", { titleFilled, startFilled });
 
   if (!titleFilled || !startFilled) {
+    done({ status: "error", reason: "selectors_not_found", createLiveUrl });
     return {
       text:
         "Live page opened but required fields were not found.\n" +
@@ -161,6 +188,7 @@ async function runLiveCreateWithInput(api, input) {
   await clickFirstCandidate(page, PUBLISH_CANDIDATES);
   const liveUrl = await readFirstAttribute(page, LIVE_LINK_CANDIDATES, "href");
   const liveId = extractLiveId(liveUrl);
+  done({ status: "ok", liveId, liveUrl: liveUrl || "" });
 
   return {
     text:
@@ -204,27 +232,45 @@ export function parseCreateLiveArgs(rawArgs = []) {
 }
 
 export async function handleXetCommand({ api, argsText }) {
+  const done = traceSpan(api, "handleXetCommand", { argsText: String(argsText || "") });
   const args = tokenizeArgs(argsText);
   const action = (args[0] || "help").toLowerCase();
 
   if (action === "smoke") {
-    return await runSmoke(api);
+    const result = await runSmoke(api);
+    done({ action, status: "ok" });
+    return result;
   }
 
   if (action === "login") {
-    return await runLogin(api);
+    const result = await runLogin(api);
+    done({ action, status: "ok" });
+    return result;
   }
 
   if (action === "live" && (args[1] || "").toLowerCase() === "create") {
-    return await runLiveCreate(api, args.slice(2));
+    const result = await runLiveCreate(api, args.slice(2));
+    done({ action: "live.create", status: "ok" });
+    return result;
+  }
+
+  if (action === "trace") {
+    done({ action, status: "ok" });
+    return { text: formatTraceText() };
   }
 
   if (action === "session") {
     const subAction = (args[1] || "status").toLowerCase();
     if (subAction === "close" || subAction === "logout") {
       await closeActiveSession();
+      done({ action: "session.close", status: "ok" });
       return { text: "XET session closed." };
     }
+    if (subAction === "trace") {
+      done({ action: "session.trace", status: "ok" });
+      return { text: formatTraceText() };
+    }
+    done({ action: "session.status", status: "ok" });
     return {
       text: activeSession
         ? `XET session is active.\nuserDataDir=${activeSession.userDataDir}\nstartedAt=${new Date(activeSession.startedAt).toISOString()}`
@@ -233,16 +279,20 @@ export async function handleXetCommand({ api, argsText }) {
   }
 
   if (String(argsText || "").trim()) {
-    return routeNaturalLanguage({ api, text: String(argsText || "") });
+    const result = await routeNaturalLanguage({ api, text: String(argsText || "") });
+    done({ action: "natural_language", status: "ok" });
+    return result;
   }
 
+  done({ action: "help", status: "ok" });
   return {
     text:
       "Usage:\n" +
       "/xet login  - open Xiaoe admin login and save session state\n" +
       "/xet live create --title \"直播标题\" --start \"2026-03-10 20:00\" [--desc \"简介\"]\n" +
+      "/xet trace  - show recent plugin traces for diagnosis\n" +
       "/xet smoke  - browser smoke check (open example.com + screenshot)\n" +
-      "/xet session status|close - view/close the in-memory active browser session"
+      "/xet session status|close|trace - session state and traces"
   };
 }
 
@@ -259,21 +309,28 @@ function tokenizeArgs(input) {
 }
 
 export async function routeNaturalLanguage({ api, text, resolveIntent, executeIntent }) {
+  const done = traceSpan(api, "routeNaturalLanguage", { text });
   const resolver = resolveIntent || resolveIntentFromText;
   const executor = executeIntent || executeResolvedIntent;
 
   const intent = await resolver({ api, text });
-  return executor({ api, intent });
+  addTrace(api, "routeNaturalLanguage.intent", { intent: intent?.intent || "unknown" });
+  const result = await executor({ api, intent });
+  done({ status: "ok", resolvedIntent: intent?.intent || "unknown" });
+  return result;
 }
 
 export async function resolveIntentFromText({ api, text }) {
+  const done = traceSpan(api, "resolveIntentFromText");
   const source = String(text || "").trim();
   if (!source) {
+    done({ status: "empty_input" });
     return { intent: "unknown", reason: "empty_input" };
   }
 
   const runtimeResolver = api?.runtime?.intent?.resolve;
   if (typeof runtimeResolver !== "function") {
+    done({ status: "resolver_unavailable" });
     return {
       intent: "unknown",
       reason: "intent_resolver_unavailable",
@@ -282,13 +339,17 @@ export async function resolveIntentFromText({ api, text }) {
   }
 
   try {
+    addTrace(api, "resolveIntentFromText.runtimeResolve.start", { task: "xet_intent_v1" });
     const resolved = await runtimeResolver({
       task: "xet_intent_v1",
       text: source,
       schema: XET_INTENT_SCHEMA
     });
-    return normalizeIntentResult(resolved, source);
+    const normalized = normalizeIntentResult(resolved, source);
+    done({ status: "ok", intent: normalized.intent });
+    return normalized;
   } catch (error) {
+    done({ status: "error", error: error instanceof Error ? error.message : String(error) });
     return {
       intent: "unknown",
       reason: "intent_resolver_error",
@@ -299,9 +360,12 @@ export async function resolveIntentFromText({ api, text }) {
 }
 
 export async function executeResolvedIntent({ api, intent }) {
+  const done = traceSpan(api, "executeResolvedIntent", { intent: intent?.intent || "unknown" });
   const name = String(intent?.intent || "");
   if (name === "xet.login") {
-    return runLogin(api);
+    const result = await runLogin(api);
+    done({ status: "ok" });
+    return result;
   }
 
   if (name === "xet.live.create") {
@@ -310,9 +374,12 @@ export async function executeResolvedIntent({ api, intent }) {
       start_time: intent?.params?.start_time || "",
       description: intent?.params?.description || ""
     };
-    return runLiveCreateWithInput(api, input);
+    const result = await runLiveCreateWithInput(api, input);
+    done({ status: "ok", hasTitle: !!input.title, hasStartTime: !!input.start_time });
+    return result;
   }
 
+  done({ status: "unsupported", reason: intent?.reason || "unsupported" });
   return {
     text:
       "Natural language is enabled but intent is unresolved.\n" +
@@ -342,7 +409,9 @@ function createXetLoginTool(api) {
       properties: {}
     },
     execute: async () => {
+      const done = traceSpan(api, "tool.xet_login");
       const result = await runLogin(api);
+      done({ status: /failed|timed out/i.test(String(result.text || "")) ? "error" : "ok" });
       return {
         content: [{ type: "text", text: result.text || "xet_login completed." }],
         details: { ok: !/failed|timed out/i.test(String(result.text || "")) }
@@ -368,12 +437,18 @@ function createXetLiveCreateTool(api) {
       required: ["title", "start_time"]
     },
     execute: async (_toolCallId, params = {}) => {
+      const done = traceSpan(api, "tool.xet_live_create");
       const input = {
         title: String(params.title || "").trim(),
         start_time: String(params.start_time || "").trim(),
         description: String(params.description || "").trim()
       };
       const result = await runLiveCreateWithInput(api, input);
+      done({
+        status: /not active|missing required|not found/i.test(String(result.text || "")) ? "error" : "ok",
+        hasTitle: !!input.title,
+        hasStartTime: !!input.start_time
+      });
       return {
         content: [{ type: "text", text: result.text || "xet_live_create completed." }],
         details: input
@@ -496,10 +571,16 @@ async function readFirstAttribute(page, candidates, attr) {
 }
 
 async function ensureActiveSession({ userDataDir, headless }) {
+  const start = Date.now();
   if (activeSession && activeSession.userDataDir === userDataDir) {
     try {
       const currentUrl = activeSession.page.url();
       if (typeof currentUrl === "string") {
+        addTrace(null, "ensureActiveSession.reuse", {
+          userDataDir,
+          elapsedMs: Date.now() - start,
+          currentUrl
+        });
         return activeSession;
       }
     } catch {
@@ -512,6 +593,11 @@ async function ensureActiveSession({ userDataDir, headless }) {
   const context = await chromium.launchPersistentContext(userDataDir, { headless });
   const page = context.pages()[0] || (await context.newPage());
   activeSession = { context, page, userDataDir, startedAt: Date.now() };
+  addTrace(null, "ensureActiveSession.new", {
+    userDataDir,
+    headless,
+    elapsedMs: Date.now() - start
+  });
   return activeSession;
 }
 
@@ -526,4 +612,60 @@ async function closeActiveSession() {
 
 export function __setActiveSessionForTest(session) {
   activeSession = session;
+}
+
+function addTrace(api, event, details = {}) {
+  const entry = {
+    ts: new Date().toISOString(),
+    event,
+    details
+  };
+  traceBuffer.push(entry);
+  if (traceBuffer.length > TRACE_LIMIT) {
+    traceBuffer.splice(0, traceBuffer.length - TRACE_LIMIT);
+  }
+
+  const debugLogs = api?.config?.debugLogs === true;
+  if (debugLogs && api?.logger && typeof api.logger.info === "function") {
+    api.logger.info({ plugin: "xe-openclaw-skill", event, ...details }, "[xet-trace]");
+  }
+}
+
+function traceSpan(api, event, seedDetails = {}) {
+  const startedAt = Date.now();
+  addTrace(api, `${event}.start`, seedDetails);
+  return (endDetails = {}) => {
+    addTrace(api, `${event}.end`, {
+      elapsedMs: Date.now() - startedAt,
+      ...endDetails
+    });
+  };
+}
+
+function formatTraceText(limit = 40) {
+  const recent = traceBuffer.slice(-limit);
+  if (recent.length === 0) {
+    return "No traces yet.";
+  }
+  const lines = recent.map((item) => {
+    const compactDetails = safeJson(item.details);
+    return `${item.ts} | ${item.event} | ${compactDetails}`;
+  });
+  return ["Recent XET traces:", ...lines].join("\n");
+}
+
+function safeJson(value) {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return "{}";
+  }
+}
+
+function safePageUrl(page) {
+  try {
+    return page?.url?.() || "";
+  } catch {
+    return "";
+  }
 }

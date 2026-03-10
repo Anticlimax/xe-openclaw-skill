@@ -12,6 +12,7 @@
       "storageStatePath": { "type": "string" },
       "userDataDir": { "type": "string" },
       "headless": { "type": "boolean" },
+      "debugLogs": { "type": "boolean" },
       "loginTimeoutMs": { "type": "number", "minimum": 1000 },
       "credentials": {
         "type": "object",
