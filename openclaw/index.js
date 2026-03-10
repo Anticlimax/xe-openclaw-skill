@@ -32,8 +32,16 @@ const plugin = {
     registerXetTools(api);
     if (typeof api?.on === "function") {
       api.on("before_prompt_build", async () => ({
-        prependSystemContext:
-          "When user asks to login Xiaoe admin or create Xiaoe live, prefer tools xet_login and xet_live_create."
+        prependSystemContext: [
+          "Tool-routing policy for Xiaoe:",
+          "1) If user asks to login Xiaoe (e.g. '登录小鹅通后台'), call tool `xet_login` first.",
+          "2) If user asks to create live, call tool `xet_live_create` with title/start_time.",
+          "3) Do NOT ask user for Xiaoe account/password before attempting tool call.",
+          "4) If required params missing for create_live, ask concise follow-up question.",
+          "Chinese examples:",
+          "- 用户: 帮我登录小鹅通后台 -> 调用 xet_login",
+          "- 用户: 帮我创建直播，标题春季上新，开始时间2026-03-10 20:00 -> 调用 xet_live_create"
+        ].join("\n")
       }));
     }
     api.registerCommand({
