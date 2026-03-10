@@ -5,7 +5,6 @@ import { chromium } from "playwright";
 let activeSession = null;
 const traceBuffer = [];
 const TRACE_LIMIT = 200;
-const promptByRunId = new Map();
 
 const plugin = {
   id: "xe-openclaw-skill",
@@ -36,24 +35,7 @@ const plugin = {
     registerXetTools(api);
     registerXetGatewayMethods(api);
     if (typeof api?.on === "function") {
-      api.on("llm_input", async (event) => {
-        if (event?.runId) {
-          promptByRunId.set(event.runId, String(event.prompt || ""));
-        }
-      });
       api.on("before_tool_call", async (event, ctx) => {
-        const runPrompt = event?.runId ? promptByRunId.get(event.runId) : "";
-        if (shouldBlockExecForXetPrompt(event?.toolName, runPrompt)) {
-          addTrace(api, "hook.before_tool_call.block_exec_for_xet", {
-            toolName: event?.toolName || "",
-            runId: event?.runId || "",
-            promptHint: (runPrompt || "").slice(0, 120)
-          });
-          return {
-            block: true,
-            blockReason: "For Xiaoe login/live tasks, call xet_login or xet_live_create instead of exec."
-          };
-        }
         addTrace(api, "hook.before_tool_call", {
           toolName: event?.toolName || "",
           toolCallId: event?.toolCallId || "",
@@ -69,15 +51,6 @@ const plugin = {
           runId: ctx?.runId || "",
           sessionId: ctx?.sessionId || ""
         });
-      });
-      api.on("agent_end", async (event) => {
-        const messages = Array.isArray(event?.messages) ? event.messages : [];
-        for (const msg of messages) {
-          const runId = msg?.runId;
-          if (typeof runId === "string" && runId) {
-            promptByRunId.delete(runId);
-          }
-        }
       });
       api.on("before_prompt_build", async () => ({
         prependSystemContext: [
@@ -679,17 +652,6 @@ async function closeActiveSession() {
 
 export function __setActiveSessionForTest(session) {
   activeSession = session;
-}
-
-export function shouldBlockExecForXetPrompt(toolName, promptText) {
-  if (String(toolName || "").toLowerCase() !== "exec") {
-    return false;
-  }
-  const text = String(promptText || "").toLowerCase();
-  if (!text) return false;
-  const mentionsXet = /(小鹅通|xiaoe|xet)/.test(text);
-  const mentionsAction = /(登录|login|创建直播|直播|live)/.test(text);
-  return mentionsXet && mentionsAction;
 }
 
 function addTrace(api, event, details = {}) {
