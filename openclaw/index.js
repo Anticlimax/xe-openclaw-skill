@@ -81,14 +81,14 @@ const plugin = {
       });
       api.on("before_prompt_build", async () => ({
         prependSystemContext: [
-          "Tool-routing policy for Xiaoe:",
-          "1) For ANY Xiaoe-related request, call tool `xet_router` first.",
-          "2) Do NOT use exec/shell tools for Xiaoe login/live tasks.",
-          "3) Do NOT ask user for Xiaoe account/password before attempting tool call.",
-          "4) If required params missing for create_live, ask concise follow-up question.",
-          "Chinese examples:",
-          "- 用户: 帮我登录小鹅通后台 -> 调用 xet_router",
-          "- 用户: 帮我创建直播，标题春季上新，开始时间2026-03-10 20:00 -> 调用 xet_router"
+          "Xiaoe tool-routing MUST rules:",
+          "1) If latest user request is about 小鹅通 / xiaoe / xet (login, 店铺后台, 直播), you MUST call `xet_router` before any other tool.",
+          "2) For Xiaoe requests, do NOT use generic tools (`exec`, `read`, `write`, `grep`, shell) unless user explicitly asks to debug local code/files.",
+          "3) Do NOT ask user for Xiaoe account/password before trying tool call.",
+          "4) If create-live params missing, ask one concise follow-up question.",
+          "Examples:",
+          "- 帮我登录小鹅通后台 -> call xet_router({text: \"帮我登录小鹅通后台\"})",
+          "- 帮我创建直播，标题春季上新，开始时间2026-03-10 20:00 -> call xet_router({...})"
         ].join("\n")
       }));
     }
@@ -494,7 +494,7 @@ function createXetRouterTool(api) {
     name: "xet_router",
     label: "XET Router",
     description:
-      "Route natural-language Xiaoe requests to the right action. Use this first for Xiaoe login/live tasks.",
+      "MUST-use first tool for Xiaoe tasks. Route natural-language request to login or live-create actions.",
     parameters: {
       type: "object",
       additionalProperties: false,
